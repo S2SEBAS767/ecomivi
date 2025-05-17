@@ -1,4 +1,5 @@
 <?php
+
 use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\Exception;
 require 'PHPMailer/src/Exception.php';
@@ -12,7 +13,7 @@ if ($conn->connect_error) {
 
 session_start();
 if (!isset($_SESSION['num_doc_usu'])) {
-    header('Location: login.php');
+    header('Location: inicar_sesion.php');
     exit();
 }
 
@@ -31,6 +32,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['vehiculo_id'], $_POST
     $vehiculosId = $_POST['vehiculo_id'];
     $recompensaId = $_POST['recompensa_id'];
 
+    // Obtengo puntos totales para el vehículo
     $stmtPuntos = $conn->prepare("
         SELECT COALESCE(SUM(puntos), 0) as puntos_totales 
         FROM movilidad 
@@ -41,45 +43,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['vehiculo_id'], $_POST
     $resultadoPuntos = $stmtPuntos->get_result()->fetch_assoc();
     $puntosTotales = $resultadoPuntos['puntos_totales'];
 
+    // Obtengo datos de la recompensa
     $stmtRecompensa = $conn->prepare("SELECT puntos, disponible, nom_reco FROM recompensa WHERE nom_reco = ?");
     $stmtRecompensa->bind_param("s", $recompensaId);
     $stmtRecompensa->execute();
     $recompensa = $stmtRecompensa->get_result()->fetch_assoc();
 
     if ($recompensa && $puntosTotales >= $recompensa['puntos'] && $recompensa['disponible'] > 0) {
-        $puntosRestantes = $recompensa['puntos'];
 
-        $stmtGetRecords = $conn->prepare("
-            SELECT id_mov, puntos 
-            FROM movilidad 
-            WHERE plac_veh = ? 
-            AND fecha_final IS NOT NULL 
-            AND puntos > 0 
-            ORDER BY fecha_final DESC
-        ");
-        $stmtGetRecords->bind_param("s", $vehiculosId);
-        $stmtGetRecords->execute();
-        $result = $stmtGetRecords->get_result();
-
-        while (($row = $result->fetch_assoc()) && $puntosRestantes > 0) {
-            $puntosADescontar = min($row['puntos'], $puntosRestantes);
-            $nuevosPuntos = $row['puntos'] - $puntosADescontar;
-
-            $stmtUpdatePuntos = $conn->prepare("UPDATE movilidad SET puntos = ? WHERE id_mov = ?");
-            $stmtUpdatePuntos->bind_param("ii", $nuevosPuntos, $row['id_mov']);
-            $stmtUpdatePuntos->execute();
-
-            $puntosRestantes -= $puntosADescontar;
-        }
-
+        // Aquí NO descontamos puntos, solo descontamos la recompensa disponible
         $stmtUpdateRecompensa = $conn->prepare("UPDATE recompensa SET disponible = disponible - 1 WHERE nom_reco = ?");
         $stmtUpdateRecompensa->bind_param("s", $recompensaId);
         $stmtUpdateRecompensa->execute();
 
+        // Insertamos el canjeo (sin descontar puntos)
         $stmtInsert = $conn->prepare("INSERT INTO canjeos (plac_veh, nom_reco, fecha) VALUES (?, ?, NOW())");
         $stmtInsert->bind_param("ss", $vehiculosId, $recompensaId);
         $stmtInsert->execute();
 
+        // Envío de correo
         $mail = new PHPMailer(true);
         try {
             $mail->isSMTP();
@@ -370,25 +352,20 @@ while ($row = $resultRecompensas->fetch_assoc()) {
         <div class="modal-body">
           <input type="hidden" name="vehiculo_id" id="vehiculoId">
           <div class="list-group">
-          <?php foreach ($recompensas as $recompensa): ?>
-                    <label class="list-group-item d-flex justify-content-between align-items-center">
-                      <div class="d-flex align-items-center">
-                         <img src="<?= htmlspecialchars($recompensa['imagen_url'] ?: 'placeholder.jpg') ?>"
-                          alt="Imagen Recompensa"
-                          style="width: 50px; height: 50px; object-fit: cover; margin-right: 10px;">
-                      <div>
-                         <?= htmlspecialchars($recompensa['nom_reco']) ?> - <b>Puntos: <?= $recompensa['puntos'] ?></b>
-                      </div>
-                      </div>    
-                        <input type="radio" name="recompensa_id" value="<?= htmlspecialchars($recompensa['nom_reco']) ?>" required>
-                    </label>
-             <?php endforeach;?>
+            <?php foreach ($recompensas as $recompensa): ?>
+              <label class="list-group-item d-flex justify-content-between align-items-center">
+                <div>
+                  <?= htmlspecialchars($recompensa['nom_reco']) ?> (<?= $recompensa['puntos'] ?> pts)
+                </div>
+                <input type="radio" name="recompensa_id" value="<?= htmlspecialchars($recompensa['nom_reco']) ?>" required>
+              </label>
+            <?php endforeach; ?>
           </div>
         </div>
         <div class="modal-footer">
           <button type="submit" class="btn btn-success">Canjear</button>
         </div>
-        
+       
 
       </form>
     </div>
